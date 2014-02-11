@@ -11,7 +11,7 @@ Usage
 ``` shell
 python fakeAP.py
 ```
-This will create a soft access point with the ESSID of 'Free Wifi' on channel 6 without encryption. 
+Create a soft access point with the ESSID of 'Free Wifi' on channel 6 without encryption. 
 
 
 ``` shell

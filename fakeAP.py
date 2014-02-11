@@ -28,52 +28,60 @@ C  = '\033[36m' # cyan
 GR = '\033[37m' # gray
 T  = '\033[93m' # tan
 
+lock = Lock()
 DN = open(os.devnull, 'w')
 APs = {}
 chan = 0 # for channel hopping Process
-count = 0
-forw = '0\n'
-lock = Lock()
+count = 0 # for channel hopping Process
+forw = '0\n' # for resetting ip forwarding to original state
 ap_mac = '' # for sniff's cb function
-mon_mac1 = '' # for deauth sniff's cb
-mon_mac2 = '' # for deauth sniff's cb
-clients = [] # for deauth sniff's cb
+err = None
 
 def parse_args():
     #Create the arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--channel", help="Choose the channel for the fake AP. Default is channel 6.")
+    parser.add_argument("-c", "--channel", help="Choose the channel for the fake AP. Default is channel 6")
+    parser.add_argument("-w", "--wpa", help="Start the fake AP with WPA beacon tags and capture handshakes in fakeAPlog.cap file", action="store_true")
     parser.add_argument("-e", "--essid", help="Choose the ESSID for the fake AP. Default is 'Free Wifi'. Wrap in quotes if it is more than 1 word: -e 'Free Wifi'")
-    parser.add_argument("-t", "--targeting", help="Will print a list of APs in range", action="store_true")
+    parser.add_argument("-t", "--targeting", help="Will print a list of APs in range and allow you to copy their settings except for the encryption which by default will be open", action="store_true")
     return parser.parse_args()
 
 
-########################
-# AP TARGETING & DEAUTH
-########################
+###############
+# AP TARGETING
+###############
+
+def channel_hop(mon_iface):
+    global chan, err
+    while 1:
+        try:
+            err = None
+            if chan > 11:
+                chan = 0
+            chan = chan+1
+            channel = str(chan)
+            iw = Popen(['iw', 'dev', mon_iface, 'set', 'channel', channel], stdout=DN, stderr=PIPE)
+            for line in iw.communicate()[1].split('\n'):
+                if len(line) > 2: # iw dev shouldnt display output unless there's an error
+                    with lock:
+                        err = '['+R+'-'+W+'] Channel hopping failed: '+R+line+W+'\n    \
+Try disconnecting the monitor mode\'s parent interface (e.g. wlan0)\n    \
+from the network if you have not already\n'
+                    break
+            time.sleep(1)
+        except KeyboardInterrupt:
+            sys.exit()
 
 def target_APs():
     os.system('clear')
-    print '['+T+'*'+W+'] If channel hopping is not working disconnect the monitor mode parent interface (like wlan1) from the network it is on'
+    if err:
+        print err
     print 'num  ch   ESSID'
     print '---------------'
     for ap in APs:
         print G+str(ap).ljust(2)+W+' - '+APs[ap][0].ljust(2)+' - '+T+APs[ap][1]+W
 
-def channel_hop(mon_iface):
-    global chan
-    while 1:
-        try:
-            if chan > 11:
-                chan = 0
-            chan = chan+1
-            channel = str(chan)
-            Popen(['iw', 'dev', mon_iface, 'set', 'channel', channel], stdout=DN, stderr=DN)
-            time.sleep(2)
-        except KeyboardInterrupt:
-            sys.exit()
-
-def copy_AP(inet_iface, interfaces, args):
+def copy_AP():
     copy = None
     while not copy:
         try:
@@ -84,57 +92,12 @@ def copy_AP(inet_iface, interfaces, args):
             continue
     channel = APs[copy][0]
     essid = APs[copy][1]
+    if str(essid) == "\x00":
+        essid = ' '
     mac = APs[copy][2]
     return channel, essid, mac
 
-def deauth_cb(pkt):
-    global clients, mon_mac2
-    if pkt.haslayer(Dot11):
-        if pkt.type in [1,2] and pkt.addr1 and pkt.addr2: # 1 management, 2 data
-
-            if pkt.addr1 == ap_mac or pkt.addr2 == ap_mac:
-                print pkt.addr1, pkt.addr2
-
-            ignore = ['ff:ff:ff:ff:ff:ff', '00:00:00:00:00:00', '33:33:00:', '33:33:ff:', '01:80:c2:00:00:00', '01:00:5e:', mon_mac1, mon_mac2]
-            for i in ignore:
-                if i in pkt.addr1 or i in pkt.addr2:
-                    return
-
-            if pkt.addr1 == ap_mac:
-                for c in clients:
-                    if pkt.addr2 == c:
-                        return
-                with lock:
-                    clients.append(pkt.addr2)
-            elif pkt.addr2 == ap_mac:
-                for c in clients:
-                    if pkt.addr1 == c:
-                        return
-                with lock:
-                    clients.append(pkt.addr1)
-#    print clients
-
-
-def target_deauth(inet_iface, interfaces, essid, ap_mac, channel):
-    global mon_mac2
-    yn = raw_input('['+G+'+'+W+'] Deauthenticate clients on '+T+essid+W+' at '+T+ap_mac+W+'? [y/n]: ')
-    if yn == 'y':
-        for i in interfaces:
-            if inet_iface == i:
-                mon_iface2 = start_monitor(i, channel)
-                mon_mac2 = get_mon_mac(mon_iface2)
-                print '['+T+'*'+W+'] Started '+T+mon_iface2+W+' on '+T+mon_mac2+W+' for deauthentication'
-                break
-
-        #dcb = deauth_cb
-        s = Thread(target=sniffing, args=(mon_iface2, deauth_cb))
-        s.daemon = True
-        s.start()
-
-#        thread here ##########################################################
-
 def targeting_cb(pkt):
-    """Callback for the first sniff() targeting"""
     global APs, count
     if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):
         try:
@@ -151,13 +114,9 @@ def targeting_cb(pkt):
         APs[count] = [ap_channel, essid, mac]
         target_APs()
 
-def deauth_pkt(pkt):
-    pass
-
-
-####################################
-# END AP TARGETING & DEAUTH
-####################################
+###################
+# END AP TARGETING
+###################
 
 
 def iwconfig():
@@ -177,8 +136,6 @@ def iwconfig():
                         interfaces[iface] = 1
                     else:
                         interfaces[iface] = 0
-#    if len(interfaces) < 2:
-#        sys.exit('[-] You need at least 2 wireless interfaces. Please bring 2 up and retry.')
     return monitors, interfaces
 
 def rm_mon():
@@ -212,7 +169,6 @@ def AP_iface(interfaces, inet_iface):
 
 def iptables(inet_iface):
     global forw
-    print '['+T+'*'+W+'] Setting up iptables'
     os.system('iptables -X')
     os.system('iptables -F')
     os.system('iptables -t nat -F')
@@ -221,7 +177,6 @@ def iptables(inet_iface):
     with open('/proc/sys/net/ipv4/ip_forward', 'r+') as ipf:
         forw = ipf.read()
         ipf.write('1\n')
-        print '['+T+'*'+W+'] Enabled IP forwarding'
         return forw
 
 def start_monitor(ap_iface, channel):
@@ -239,11 +194,14 @@ def get_mon_mac(mon_iface):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', mon_iface[:15]))
     mac = ''.join(['%02x:' % ord(char) for char in info[18:24]])[:-1]
-#    print '['+G+'*'+W+'] Monitor mode: '+G+mon_iface+W+' - '+O+mac+W
     return mac
 
-def start_ap(mon_iface, channel, essid):
-    Popen(['airbase-ng', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
+def start_ap(mon_iface, channel, essid, args):
+    print '['+T+'*'+W+'] Starting the fake access point...'
+    if args.wpa:
+        Popen(['airbase-ng', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
+    else:
+        Popen(['airbase-ng', '-Z', '4', '-W', '1', '-c', channel, '-e', essid, '-v', mon_iface, '-F', 'fakeAPlog'], stdout=DN, stderr=DN)
     try:
         time.sleep(6) # Copied from Pwnstar which said it was necessary?
     except KeyboardInterrupt:
@@ -252,6 +210,8 @@ def start_ap(mon_iface, channel, essid):
     Popen(['ifconfig', 'at0', 'mtu', '1400'], stdout=DN, stderr=DN)
 
 def sniffing(interface, cb):
+    """This exists for if/when I get deauth working
+    so that it's easy to call sniff() in a thread"""
     sniff(iface=interface, prn=cb, store=0)
 
 def dhcp_conf(ipprefix):
@@ -275,7 +235,6 @@ def dhcp_conf(ipprefix):
     return '/tmp/dhcpd.conf'
 
 def dhcp(dhcpconf, ipprefix):
-    #print '['+T+'*'+W+'] Clearing leases and starting DHCP'
     os.system('echo > /var/lib/dhcp/dhcpd.leases')
     dhcp = Popen(['dhcpd', '-cf', dhcpconf], stdout=PIPE, stderr=DN)
     if ipprefix == '19' or ipprefix == '17':
@@ -294,7 +253,6 @@ def mon_mac(mon_iface):
 
 def cleanup(signal, frame):
     global forw
-    print '\n['+R+'!'+W+'] Clearing iptables and turning off IP forwarding...'
     with open('/proc/sys/net/ipv4/ip_forward', 'r+') as forward:
         forward.write(forw)
     os.system('iptables -F')
@@ -304,11 +262,10 @@ def cleanup(signal, frame):
     os.system('pkill airbase-ng')
     os.system('pkill dhcpd') # Dangerous?
     rm_mon()
-#    os.system('ifconfig at0 down')
     sys.exit(0)
 
 def main(args):
-    global ipf, mon_iface, ap_mac, mon_mac1
+    global ipf, mon_iface, ap_mac
     channel = '1'
     if args.channel:
         channel = args.channel
@@ -318,32 +275,31 @@ def main(args):
 
     monitors, interfaces = iwconfig()
     if len(interfaces) < 2:
-        sys.exit('[-] You need at least 2 wireless interfaces. Please bring 2 up and retry.')
+        sys.exit('['+R+'-'+W+'] You need at least 2 wireless interfaces. Please bring 2 up and retry.')
     rm_mon()
     inet_iface, ipprefix = internet_info(interfaces)
     ap_iface = AP_iface(interfaces, inet_iface)
     ipf = iptables(inet_iface)
+    print '['+T+'*'+W+'] Cleared leases, started DHCP, set up iptables'
     mon_iface = start_monitor(ap_iface, channel)
     mon_mac1 = get_mon_mac(mon_iface)
     if args.targeting:
-        hop = Process(target=channel_hop, args=(mon_iface,))
+        hop = Thread(target=channel_hop, args=(mon_iface,))
+        hop.daemon = True
         hop.start()
-        tcb = targeting_cb
-        sniffing(mon_iface, tcb)
-        hop.terminate()
-        channel, essid, ap_mac = copy_AP(inet_iface, interfaces, args) # these 2 args are for target_deauth()
-        target_deauth(inet_iface, interfaces, essid, ap_mac, channel)
-    start_ap(mon_iface, channel, essid)
+        sniffing(mon_iface, targeting_cb)
+        channel, essid, ap_mac = copy_AP()
+    start_ap(mon_iface, channel, essid, args)
     dhcpconf = dhcp_conf(ipprefix)
     dhcp(dhcpconf, ipprefix)
     signal.signal(signal.SIGINT, cleanup)
     while 1:
         os.system('clear')
-        print '['+T+'*'+W+'] '+T+essid+W+' set up on channel '+T+channel+W
-        print '    DHCP leases:\n'
+        print '['+T+'*'+W+'] '+T+essid+W+' set up on channel '+T+channel+W+' via '+T+mon_iface+W+' on '+T+ap_iface+W
+        print '\nDHCP leases log file:'
         proc = Popen(['cat', '/var/lib/dhcp/dhcpd.leases'], stdout=PIPE, stderr=DN)
         for line in proc.communicate()[0].split('\n'):
             print line
-        time.sleep(2)
+        time.sleep(1)
 
 main(parse_args())
