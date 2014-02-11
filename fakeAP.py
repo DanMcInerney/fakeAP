@@ -11,7 +11,6 @@ import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
 conf.verb = 0
-from multiprocessing import Process
 from threading import Thread, Lock
 import socket
 import struct
@@ -161,7 +160,7 @@ def internet_info(interfaces):
     if inet_iface:
         return inet_iface, ipprefix
     else:
-        sys.exit('['+R+'!'+W+'] No active internet connection found, exiting')
+        sys.exit('['+R+'-'+W+'] No active internet connection found. Exiting')
 
 def AP_iface(interfaces, inet_iface):
     for i in interfaces:
@@ -253,7 +252,6 @@ def mon_mac(mon_iface):
     return mac
 
 def cleanup(signal, frame):
-    global forw
     with open('/proc/sys/net/ipv4/ip_forward', 'r+') as forward:
         forward.write(forw)
     os.system('iptables -F')
@@ -263,10 +261,14 @@ def cleanup(signal, frame):
     os.system('pkill airbase-ng')
     os.system('pkill dhcpd') # Dangerous?
     rm_mon()
-    sys.exit(0)
+    sys.exit('\n['+G+'+'+W+'] Cleaned up')
 
 def main(args):
     global ipf, mon_iface, ap_mac
+
+    if os.geteuid() != 0:
+        sys.exit('['+R+'-'+W+'] Run as root')
+
     channel = '1'
     if args.channel:
         channel = args.channel
@@ -279,7 +281,7 @@ def main(args):
     inet_iface, ipprefix = internet_info(interfaces)
     ap_iface = AP_iface(interfaces, inet_iface)
     if not ap_iface:
-        sys.exit('['+R+'!'+W+'] Found internet connected interface in '+T+inet_iface+W+'. Please bring up a wireless interface to use as the fake access point.')
+        sys.exit('['+R+'-'+W+'] Found internet connected interface in '+T+inet_iface+W+'. Please bring up a wireless interface to use as the fake access point.')
     ipf = iptables(inet_iface)
     print '['+T+'*'+W+'] Cleared leases, started DHCP, set up iptables'
     mon_iface = start_monitor(ap_iface, channel)
@@ -293,8 +295,8 @@ def main(args):
     start_ap(mon_iface, channel, essid, args)
     dhcpconf = dhcp_conf(ipprefix)
     dhcp(dhcpconf, ipprefix)
-    signal.signal(signal.SIGINT, cleanup)
     while 1:
+        signal.signal(signal.SIGINT, cleanup)
         os.system('clear')
         print '['+T+'*'+W+'] '+T+essid+W+' set up on channel '+T+channel+W+' via '+T+mon_iface+W+' on '+T+ap_iface+W
         print '\nDHCP leases log file:'
