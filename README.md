@@ -1,7 +1,7 @@
 fakeAP
 ======
 
-Create a fake access point in Kali. Determines the correct DHCP settings and creates the dhcpd.conf file for you.
+Create a fake access point in Kali. Determines the correct DHCP settings and creates the dhcpd.conf file for you. Includes the option to sniff all APs in the area and copy one of their settings.
 
 
 Usage
@@ -17,7 +17,7 @@ Create a fake access point with the ESSID of 'Free Wifi' on channel 6 without en
 ``` shell
 python fakeAP.py -t
 ```
--t, Sniff the air for all access points in range, Ctrl-C to select one and use its ESSID and channel in the creation of your fake AP.
+-t, Sniff the air for all access points in range, Ctrl-C to select one and use its ESSID and channel in the creation of your fake AP
 
 
 ``` shell
