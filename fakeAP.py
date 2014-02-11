@@ -275,8 +275,6 @@ def main(args):
         essid = args.essid
 
     monitors, interfaces = iwconfig()
-    if len(interfaces) < 2:
-        sys.exit('['+R+'-'+W+'] You need at least 2 wireless interfaces. Please bring 2 up and retry.')
     rm_mon()
     inet_iface, ipprefix = internet_info(interfaces)
     ap_iface = AP_iface(interfaces, inet_iface)
