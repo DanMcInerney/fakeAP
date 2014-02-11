@@ -200,9 +200,9 @@ def get_mon_mac(mon_iface):
 def start_ap(mon_iface, channel, essid, args):
     print '['+T+'*'+W+'] Starting the fake access point...'
     if args.wpa:
-        Popen(['airbase-ng', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
-    else:
         Popen(['airbase-ng', '-Z', '4', '-W', '1', '-c', channel, '-e', essid, '-v', mon_iface, '-F', 'fakeAPlog'], stdout=DN, stderr=DN)
+    else:
+        Popen(['airbase-ng', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
     try:
         time.sleep(6) # Copied from Pwnstar which said it was necessary?
     except KeyboardInterrupt:
