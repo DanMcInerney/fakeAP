@@ -11,16 +11,18 @@ Usage
 ``` shell
 python fakeAP.py
 ```
-Create a soft access point with the ESSID of 'Free Wifi' on channel 6 without encryption. 
+Create a fake access point with the ESSID of 'Free Wifi' on channel 6 without encryption. 
 
 
 ``` shell
-python fakeAP.py -c 1 -e 'New SSID'
+python fakeAP.py -c 1 -e 'New SSID' -w
 ```
 
 -c, Start the access point on channel 1
 
 -e, Set the broadcast ESSID as 'New SSID'
+
+-w, Set the fake access point to use WPA2 flagged beacon frames and save handshakes to fakeAPlog.cap
 
 
 
