@@ -127,16 +127,16 @@ def iwconfig():
     for line in proc.communicate()[0].split('\n'):
         if len(line) == 0: continue # Isn't an empty string
         if line[0] != ' ': # Doesn't start with space
-            ignore_iface = re.search('eth[0-9]|em[0-9]|p[1-9]p[1-9]|at[0-9]', line)
-            if not ignore_iface: # Isn't wired or at0 tunnel
-                iface = line[:line.find(' ')] # is the interface name
-                if 'Mode:Monitor' in line:
-                    monitors.append(iface)
-                elif 'IEEE 802.11' in line:
-                    if "ESSID:\"" in line:
-                        interfaces[iface] = 1
-                    else:
-                        interfaces[iface] = 0
+            #ignore_iface = re.search('eth[0-9]|em[0-9]|p[1-9]p[1-9]|at[0-9]', line)
+            #if not ignore_iface: # Isn't wired or at0 tunnel
+            iface = line[:line.find(' ')] # is the interface name
+            if 'Mode:Monitor' in line:
+                monitors.append(iface)
+            elif 'IEEE 802.11' in line:
+                if "ESSID:\"" in line:
+                    interfaces[iface] = 1
+                else:
+                    interfaces[iface] = 0
     return monitors, interfaces
 
 def rm_mon():
@@ -278,6 +278,8 @@ def main(args):
     rm_mon()
     inet_iface, ipprefix = internet_info(interfaces)
     ap_iface = AP_iface(interfaces, inet_iface)
+    if not ap_iface:
+        sys.exit('['+R+'!'+W+'] Found internet connected interface in '+T+inet_iface+W+'. Please bring up a wireless interface to use as the fake access point.')
     ipf = iptables(inet_iface)
     print '['+T+'*'+W+'] Cleared leases, started DHCP, set up iptables'
     mon_iface = start_monitor(ap_iface, channel)
