@@ -15,6 +15,12 @@ Create a fake access point with the ESSID of 'Free Wifi' on channel 6 without en
 
 
 ``` shell
+python fakeAP.py -t
+```
+-t, Sniff the air for all access points in range, Ctrl-C to select one and use its ESSID and channel in the creation of your fake AP.
+
+
+``` shell
 python fakeAP.py -c 1 -e 'New SSID' -w
 ```
 

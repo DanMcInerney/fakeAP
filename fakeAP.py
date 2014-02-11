@@ -76,6 +76,7 @@ def target_APs():
     os.system('clear')
     if err:
         print err
+    print '['+G+'+'+W+'] Ctrl-C at any time to copy an access point from below'
     print 'num  ch   ESSID'
     print '---------------'
     for ap in APs:
