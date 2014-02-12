@@ -203,7 +203,7 @@ def start_ap(mon_iface, channel, essid, args):
     if args.wpa:
         Popen(['airbase-ng', '-P', '-Z', '4', '-W', '1', '-c', channel, '-e', essid, '-v', mon_iface, '-F', 'fakeAPlog'], stdout=DN, stderr=DN)
     else:
-        Popen(['airbase-ng', '-P', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
+        Popen(['airbase-ng', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
     try:
         time.sleep(6) # Copied from Pwnstar which said it was necessary?
     except KeyboardInterrupt:
