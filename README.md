@@ -11,7 +11,7 @@ Usage
 ``` shell
 python fakeAP.py
 ```
-Create a fake access point with the ESSID of 'Free Wifi' on channel 6 without encryption. 
+Create a fake access point with the ESSID of 'Free Wifi' on channel 6 without encryption that responds to all broadcast probes
 
 
 ``` shell
