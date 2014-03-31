@@ -117,7 +117,13 @@ def targeting_cb(pkt):
 ###################
 # END AP TARGETING
 ###################
-
+def get_isc_dhcp_server():
+    if not os.path.isfile('/usr/sbin/dhcpd'):
+        install = raw_input('['+T+'*'+W+'] isc-dhcp-server not found in /usr/sbin/dhcpd, install now? [y/n] ')
+        if install == 'y':
+            os.system('apt-get -y install isc-dhcp-server')
+        else:
+        sys.exit('['+R+'-'+W+'] isc-dhcp-server not found in /usr/sbin/dhcpd')
 
 def iwconfig():
     monitors = []
@@ -270,6 +276,8 @@ def main(args):
 
     if os.geteuid() != 0:
         sys.exit('['+R+'-'+W+'] Run as root')
+
+    get_isc_dhcp_server()
 
     channel = '1'
     if args.channel:
