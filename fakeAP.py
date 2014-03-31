@@ -123,7 +123,7 @@ def get_isc_dhcp_server():
         if install == 'y':
             os.system('apt-get -y install isc-dhcp-server')
         else:
-        sys.exit('['+R+'-'+W+'] isc-dhcp-server not found in /usr/sbin/dhcpd')
+            sys.exit('['+R+'-'+W+'] isc-dhcp-server not found in /usr/sbin/dhcpd')
 
 def iwconfig():
     monitors = []
