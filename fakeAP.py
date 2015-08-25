@@ -191,11 +191,24 @@ def iptables(inet_iface):
 
 def start_monitor(ap_iface, channel):
     proc = Popen(['airmon-ng', 'start', ap_iface, channel], stdout=PIPE, stderr=DN)
-    for line in proc.communicate()[0].split('\n'):
+    # todo: cleanup
+    proc_lines = proc.communicate()[0].split('\n')
+    # Old airmon-ng
+    for line in proc_lines:
         if "monitor mode enabled" in line:
             line = line.split()
             mon_iface = line[4][:-1]
             return mon_iface
+        split_line = line.split()
+        for s in split_line:
+            if ap_iface+'mon' in s:
+                # s = "[phy0]wlan0mon]" Cut off [phy0] then final "]"
+                mon_iface = s[s.find(']')+1:-1]
+                return mon_iface
+
+    sys.exit('[-] Monitor mode not found. Paste output of `airmon-ng start [interface]` to github issues\n'
+             'https://github.com/DanMcInerney/fakeAP/issues')
+
 
 def get_mon_mac(mon_iface):
     '''http://stackoverflow.com/questions/159137/getting-mac-address'''
