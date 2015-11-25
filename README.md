@@ -1,6 +1,8 @@
 fakeAP
 ======
 
+*** I believe this tool is currently broken. I don't have much incentive to fix it since there are a lot of other fakeAP scripts out there. I suggest just following this guide: https://www.offensive-security.com/kali-linux/kali-linux-evil-wireless-access-point/ I might try scripting that whole process out sometime.***
+
 Create a fake access point in Kali. Determines the correct DHCP settings and creates the dhcpd.conf file for you. Includes the option to sniff all APs in the area and copy one of their settings.
 
 
